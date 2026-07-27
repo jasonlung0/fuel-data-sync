@@ -2,12 +2,12 @@ async function run() {
   try {
     const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY;
     
-    // Safety Validation: Prevent execution if GitHub Action Secrets aren't loading
+    // Safety Validation
     if (!SCRAPINGANT_API_KEY || SCRAPINGANT_API_KEY.trim() === "") {
-      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty. Check your GitHub Secrets configuration.");
+      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty.");
     }
     if (!process.env.GOV_CLIENT_ID || !process.env.GOV_CLIENT_SECRET) {
-      throw new Error("CRITICAL: GOV_CLIENT_ID or GOV_CLIENT_SECRET is missing from the environment variables.");
+      throw new Error("CRITICAL: GOV_CLIENT_ID or GOV_CLIENT_SECRET is missing.");
     }
 
     // ---------------------------------------------------------
@@ -16,56 +16,51 @@ async function run() {
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
     
-    // Base URL is strictly hardcoded with no variables to avoid domain corruption
-    const saBaseUrl = 'https://scrapingant.com';
-
-    // Construct clean URL search parameters cleanly away from the domain string
+    // CORRECTED: All ScrapingAnt configs MUST be in the query string, not the body.
+    const saBaseUrl = 'https://api.scrapingant.com/v2/general';
     const tokenParams = new URLSearchParams({
-      'x-api-key': SCRAPINGANT_API_KEY
+      'x-api-key': SCRAPINGANT_API_KEY,
+      'url': tokenTargetUrl,
+      'proxy_type': 'residential',
+      'proxy_country': 'gb',
+      'browser': 'false' // Use 'false' for pure API POST requests to ensure data passes correctly
     });
+
+    const saTokenUrl = `${saBaseUrl}?${tokenParams.toString()}`;
 
     let tokenResponse;
     try {
-      tokenResponse = await fetch(`${saBaseUrl}?${tokenParams.toString()}`, {
-        method: 'POST',
+      tokenResponse = await fetch(saTokenUrl, {
+        method: 'POST', // We use POST because we are sending data to the Gov API
         headers: {
-          'Content-Type': 'application/json',
-          'Ant-Content-Type': 'application/json',
-          'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          // Tell ScrapingAnt the body is JSON
+          'Ant-Content-Type': 'application/json', 
+          // Standard headers for the target
+          'Content-Type': 'application/json'
         },
+        // The body contains ONLY the data for the Government API
         body: JSON.stringify({
-          url: tokenTargetUrl,
-          method: 'POST',
-          browser: true,
-          proxy_type: 'residential',
-          proxy_country: 'gb',
-          data: JSON.stringify({
-            client_id: process.env.GOV_CLIENT_ID,
-            client_secret: process.env.GOV_CLIENT_SECRET
-          })
+          client_id: process.env.GOV_CLIENT_ID,
+          client_secret: process.env.GOV_CLIENT_SECRET
         })
       });
     } catch (networkError) {
       console.error("Network Error Details:", networkError.cause || networkError);
-      throw new Error(`Connection to ScrapingAnt endpoint failed completely: ${networkError.message}`);
+      throw new Error(`Connection to ScrapingAnt endpoint failed: ${networkError.message}`);
     }
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      throw new Error(`Token request failed with status ${tokenResponse.status}: ${errorText.substring(0, 500)}`);
+      // Log the full error to help debug if it fails again
+      console.error(`Full Error Response: ${errorText}`);
+      throw new Error(`Token request failed with status ${tokenResponse.status}`);
     }
 
-    const rawTokenText = await tokenResponse.text();
-    let tokenData;
-    try {
-      tokenData = JSON.parse(rawTokenText);
-    } catch (e) {
-      throw new Error(`Token response was not valid JSON. Raw body: ${rawTokenText.substring(0, 500)}`);
-    }
-
+    const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
+    
     if (!accessToken) {
-      throw new Error(`Access token missing from response payload. Response: ${rawTokenText}`);
+      throw new Error(`Access token missing. Full response: ${JSON.stringify(tokenData)}`);
     }
     console.log("Access token obtained successfully.");
 
@@ -78,64 +73,47 @@ async function run() {
     const pricesParams = new URLSearchParams({
       'url': pricesTargetUrl,
       'x-api-key': SCRAPINGANT_API_KEY,
-      'browser': 'true',
+      'browser': 'false', // Faster for JSON APIs
       'proxy_type': 'residential',
       'proxy_country': 'gb'
     });
 
-    let pricesResponse;
-    try {
-      pricesResponse = await fetch(`${saBaseUrl}?${pricesParams.toString()}`, {
-        method: 'GET',
-        headers: {
-          'Ant-Authorization': 'Bearer ' + accessToken,
-          'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-    } catch (networkError) {
-      console.error("Prices Network Error Details:", networkError.cause || networkError);
-      throw new Error(`Connection to ScrapingAnt during data extraction failed: ${networkError.message}`);
-    }
+    const saPricesUrl = `${saBaseUrl}?${pricesParams.toString()}`;
+
+    const pricesResponse = await fetch(saPricesUrl, {
+      method: 'GET',
+      headers: {
+        'Ant-Authorization': `Bearer ${accessToken}`,
+        'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
 
     if (!pricesResponse.ok) {
       const errorText = await pricesResponse.text();
       throw new Error(`Prices request failed with status ${pricesResponse.status}: ${errorText.substring(0, 500)}`);
     }
 
-    const rawPricesText = await pricesResponse.text();
-    let pricesData;
-    try {
-      pricesData = JSON.parse(rawPricesText);
-    } catch (e) {
-      throw new Error(`Prices response was not valid JSON. Raw body: ${rawPricesText.substring(0, 500)}`);
-    }
-
+    const pricesData = await pricesResponse.json();
     console.log(`Fetched fuel data successfully.`);
 
     // ---------------------------------------------------------
     // 3. Upload to Cloudflare KV (Direct)
     // ---------------------------------------------------------
     console.log("Uploading to Cloudflare KV...");
-    const cfUrl = 'https://cloudflare.com' + process.env.CF_ACCOUNT_ID + '/storage/kv/namespaces/' + process.env.CF_NAMESPACE_ID + '/values/latest_fuel_data';
+    const cfUrl = `https://cloudflare.com{process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
 
-    let cfResponse;
-    try {
-      cfResponse = await fetch(cfUrl, {
-        method: 'PUT',
-        headers: {
-          'Authorization': 'Bearer ' + process.env.CF_API_TOKEN,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(pricesData)
-      });
-    } catch (networkError) {
-      console.error("Cloudflare Network Error Details:", networkError.cause || networkError);
-      throw new Error(`Connection to Cloudflare API failed: ${networkError.message}`);
-    }
+    const cfResponse = await fetch(cfUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(pricesData)
+    });
 
     if (!cfResponse.ok) {
       const errorText = await cfResponse.text();
-      throw new Error(`Cloudflare KV upload failed with status ${cfResponse.status}: ${errorText.substring(0, 500)}`);
+      throw new Error(`Cloudflare KV upload failed: ${cfResponse.status} - ${errorText}`);
     }
 
     console.log("Upload successful!");
