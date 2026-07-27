@@ -16,26 +16,29 @@ async function run() {
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
     
-    // Config url does NOT include parameters in the query string
-    const saTokenUrl = 'https://scrapingant.com' + encodeURIComponent(SCRAPINGANT_API_KEY);
+    // Base URL is strictly hardcoded with no variables to avoid domain corruption
+    const saBaseUrl = 'https://scrapingant.com';
+
+    // Construct clean URL search parameters cleanly away from the domain string
+    const tokenParams = new URLSearchParams({
+      'x-api-key': SCRAPINGANT_API_KEY
+    });
 
     let tokenResponse;
     try {
-      tokenResponse = await fetch(saTokenUrl, {
+      tokenResponse = await fetch(`${saBaseUrl}?${tokenParams.toString()}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Ant-Content-Type': 'application/json',
           'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
-        // ScrapingAnt requires configuration keys to live at the root level of the payload
         body: JSON.stringify({
           url: tokenTargetUrl,
           method: 'POST',
           browser: true,
           proxy_type: 'residential',
           proxy_country: 'gb',
-          // Your target credentials must be passed as a stringified payload inside the 'data' property
           data: JSON.stringify({
             client_id: process.env.GOV_CLIENT_ID,
             client_secret: process.env.GOV_CLIENT_SECRET
@@ -71,16 +74,18 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://service.gov.uk';
-    const saPricesUrl = 'https://scrapingant.com'
-      + '?url=' + encodeURIComponent(pricesTargetUrl)
-      + '&x-api-key=' + encodeURIComponent(SCRAPINGANT_API_KEY)
-      + '&browser=true'
-      + '&proxy_type=residential'
-      + '&proxy_country=gb';
+    
+    const pricesParams = new URLSearchParams({
+      'url': pricesTargetUrl,
+      'x-api-key': SCRAPINGANT_API_KEY,
+      'browser': 'true',
+      'proxy_type': 'residential',
+      'proxy_country': 'gb'
+    });
 
     let pricesResponse;
     try {
-      pricesResponse = await fetch(saPricesUrl, {
+      pricesResponse = await fetch(`${saBaseUrl}?${pricesParams.toString()}`, {
         method: 'GET',
         headers: {
           'Ant-Authorization': 'Bearer ' + accessToken,
