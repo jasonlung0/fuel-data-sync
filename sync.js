@@ -4,7 +4,7 @@ async function run() {
     
     // Safety Validation
     if (!SCRAPINGANT_API_KEY || SCRAPINGANT_API_KEY.trim() === "") {
-      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty.");
+      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty. Check GitHub Secrets.");
     }
     if (!process.env.GOV_CLIENT_ID || !process.env.GOV_CLIENT_SECRET) {
       throw new Error("CRITICAL: GOV_CLIENT_ID or GOV_CLIENT_SECRET is missing.");
@@ -16,29 +16,28 @@ async function run() {
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
     
-    // CORRECTED: All ScrapingAnt configs MUST be in the query string, not the body.
+    // CORRECTED: ScrapingAnt configs must be query parameters for POST requests
     const saBaseUrl = 'https://api.scrapingant.com/v2/general';
     const tokenParams = new URLSearchParams({
       'x-api-key': SCRAPINGANT_API_KEY,
-      'url': tokenTargetUrl,
-      'proxy_type': 'residential',
+      'url': tokenTargetUrl, 
+      'proxy_type': 'residential', // Standard often gets blocked by Gov sites
       'proxy_country': 'gb',
-      'browser': 'false' // Use 'false' for pure API POST requests to ensure data passes correctly
+      'browser': 'false' // Use false for pure API calls to avoid rendering overhead
     });
 
+    // Final URL: https://scrapingant.com...
     const saTokenUrl = `${saBaseUrl}?${tokenParams.toString()}`;
 
     let tokenResponse;
     try {
       tokenResponse = await fetch(saTokenUrl, {
-        method: 'POST', // We use POST because we are sending data to the Gov API
+        method: 'POST', // Method matches the target API requirement
         headers: {
-          // Tell ScrapingAnt the body is JSON
-          'Ant-Content-Type': 'application/json', 
-          // Standard headers for the target
-          'Content-Type': 'application/json'
+          'Ant-Content-Type': 'application/json', // Instructs ScrapingAnt to forward body as JSON
+          'Content-Type': 'application/json'      // Standard header for good measure
         },
-        // The body contains ONLY the data for the Government API
+        // Body contains ONLY the data for the Government API
         body: JSON.stringify({
           client_id: process.env.GOV_CLIENT_ID,
           client_secret: process.env.GOV_CLIENT_SECRET
@@ -51,8 +50,8 @@ async function run() {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      // Log the full error to help debug if it fails again
-      console.error(`Full Error Response: ${errorText}`);
+      // Log the HTML to see exactly what the error page says
+      console.error(`Full Error Response (HTML): ${errorText.substring(0, 500)}...`); 
       throw new Error(`Token request failed with status ${tokenResponse.status}`);
     }
 
@@ -70,10 +69,11 @@ async function run() {
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://service.gov.uk';
     
+    // For GET requests, everything goes in the query string
     const pricesParams = new URLSearchParams({
       'url': pricesTargetUrl,
       'x-api-key': SCRAPINGANT_API_KEY,
-      'browser': 'false', // Faster for JSON APIs
+      'browser': 'false', 
       'proxy_type': 'residential',
       'proxy_country': 'gb'
     });
@@ -83,7 +83,7 @@ async function run() {
     const pricesResponse = await fetch(saPricesUrl, {
       method: 'GET',
       headers: {
-        'Ant-Authorization': `Bearer ${accessToken}`,
+        'Ant-Authorization': `Bearer ${accessToken}`, // Pass the token via Ant header
         'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
