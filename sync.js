@@ -16,8 +16,13 @@ async function run() {
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
     
-    // Fixed: Added the missing '$' before the curly brace and structured the correct v2 path
-    const saTokenUrl = `https://scrapingant.com{encodeURIComponent(SCRAPINGANT_API_KEY)}&url=${encodeURIComponent(tokenTargetUrl)}&browser=true&proxy_type=residential&proxy_country=gb`;
+    // Clean string template generation with zero complex string-concatenation formatting issues
+    const saTokenUrl = 'https://scrapingant.com' 
+      + '?x-api-key=' + encodeURIComponent(SCRAPINGANT_API_KEY)
+      + '&url=' + encodeURIComponent(tokenTargetUrl)
+      + '&browser=true'
+      + '&proxy_type=residential'
+      + '&proxy_country=gb';
 
     let tokenResponse;
     try {
@@ -62,14 +67,19 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://service.gov.uk';
-    const saPricesUrl = `https://scrapingant.com{encodeURIComponent(pricesTargetUrl)}&x-api-key=${encodeURIComponent(SCRAPINGANT_API_KEY)}&browser=true&proxy_type=residential&proxy_country=gb`;
+    const saPricesUrl = 'https://scrapingant.com'
+      + '?url=' + encodeURIComponent(pricesTargetUrl)
+      + '&x-api-key=' + encodeURIComponent(SCRAPINGANT_API_KEY)
+      + '&browser=true'
+      + '&proxy_type=residential'
+      + '&proxy_country=gb';
 
     let pricesResponse;
     try {
       pricesResponse = await fetch(saPricesUrl, {
         method: 'GET',
         headers: {
-          'Ant-Authorization': `Bearer ${accessToken}`,
+          'Ant-Authorization': 'Bearer ' + accessToken,
           'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
       });
@@ -97,14 +107,14 @@ async function run() {
     // 3. Upload to Cloudflare KV (Direct)
     // ---------------------------------------------------------
     console.log("Uploading to Cloudflare KV...");
-    const cfUrl = `https://cloudflare.com{process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
+    const cfUrl = 'https://cloudflare.com' + process.env.CF_ACCOUNT_ID + '/storage/kv/namespaces/' + process.env.CF_NAMESPACE_ID + '/values/latest_fuel_data';
 
     let cfResponse;
     try {
       cfResponse = await fetch(cfUrl, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+          'Authorization': 'Bearer ' + process.env.CF_API_TOKEN,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(pricesData)
