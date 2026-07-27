@@ -2,9 +2,12 @@ async function run() {
   try {
     const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY;
     
-    // Check for critical credentials before beginning execution
-    if (!SCRAPINGANT_API_KEY) {
-      throw new Error("Missing SCRAPINGANT_API_KEY in environment variables.");
+    // Safety Validation 1: Prevent execution if GitHub Action Secrets aren't loading
+    if (!SCRAPINGANT_API_KEY || SCRAPINGANT_API_KEY.trim() === "") {
+      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty. Check your GitHub Secrets configuration.");
+    }
+    if (!process.env.GOV_CLIENT_ID || !process.env.GOV_CLIENT_SECRET) {
+      throw new Error("CRITICAL: GOV_CLIENT_ID or GOV_CLIENT_SECRET is missing from the environment variables.");
     }
 
     // ---------------------------------------------------------
@@ -12,34 +15,35 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
-    const saBaseUrl = `https://scrapingant.com{SCRAPINGANT_API_KEY}`;
+    
+    // Explicit parameter query-string fallback combined with POST configuration
+    const saTokenUrl = `https://scrapingant.com{encodeURIComponent(SCRAPINGANT_API_KEY)}&url=${encodeURIComponent(tokenTargetUrl)}&browser=true&proxy_type=residential&proxy_country=gb`;
 
-    const tokenResponse = await fetch(saBaseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Ant-Content-Type': 'application/json',
-        'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      body: JSON.stringify({
-        url: tokenTargetUrl,
-        browser: true,
-        proxy_type: 'residential',
-        proxy_country: 'gb',
-        method: 'POST', 
-        data: JSON.stringify({
+    let tokenResponse;
+    try {
+      tokenResponse = await fetch(saTokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Ant-Content-Type': 'application/json',
+          'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        body: JSON.stringify({
           client_id: process.env.GOV_CLIENT_ID,
           client_secret: process.env.GOV_CLIENT_SECRET
         })
-      })
-    });
+      });
+    } catch (networkError) {
+      // Dumps deep connection details (DNS, connection timeout, etc.) to your console logs
+      console.error("Network Error Details:", networkError.cause || networkError);
+      throw new Error(`Connection to ScrapingAnt endpoint failed completely: ${networkError.message}`);
+    }
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
       throw new Error(`Token request failed with status ${tokenResponse.status}: ${errorText.substring(0, 500)}`);
     }
 
-    // Defensive parsing to catch HTML responses before they crash the runtime
     const rawTokenText = await tokenResponse.text();
     let tokenData;
     try {
@@ -59,17 +63,21 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://service.gov.uk';
-    
-    // For GET requests, parameters can safely sit inside the query string
-    const saPricesUrl = `https://scrapingant.com{encodeURIComponent(pricesTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_type=residential&proxy_country=gb`;
+    const saPricesUrl = `https://scrapingant.com{encodeURIComponent(pricesTargetUrl)}&x-api-key=${encodeURIComponent(SCRAPINGANT_API_KEY)}&browser=true&proxy_type=residential&proxy_country=gb`;
 
-    const pricesResponse = await fetch(saPricesUrl, {
-      method: 'GET',
-      headers: {
-        'Ant-Authorization': `Bearer ${accessToken}`,
-        'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
+    let pricesResponse;
+    try {
+      pricesResponse = await fetch(saPricesUrl, {
+        method: 'GET',
+        headers: {
+          'Ant-Authorization': `Bearer ${accessToken}`,
+          'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+    } catch (networkError) {
+      console.error("Prices Network Error Details:", networkError.cause || networkError);
+      throw new Error(`Connection to ScrapingAnt during data extraction failed: ${networkError.message}`);
+    }
 
     if (!pricesResponse.ok) {
       const errorText = await pricesResponse.text();
@@ -92,14 +100,20 @@ async function run() {
     console.log("Uploading to Cloudflare KV...");
     const cfUrl = `https://cloudflare.com{process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
 
-    const cfResponse = await fetch(cfUrl, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(pricesData)
-    });
+    let cfResponse;
+    try {
+      cfResponse = await fetch(cfUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(pricesData)
+      });
+    } catch (networkError) {
+      console.error("Cloudflare Network Error Details:", networkError.cause || networkError);
+      throw new Error(`Connection to Cloudflare API failed: ${networkError.message}`);
+    }
 
     if (!cfResponse.ok) {
       const errorText = await cfResponse.text();
