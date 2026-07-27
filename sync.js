@@ -7,12 +7,13 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token';
-    const saTokenUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(tokenTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=false`;
+    
+    // Configured with residential proxy, UK geo-targeting, and browser mode to bypass WAF
+    const saTokenUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(tokenTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_type=residential&proxy_country=gb`;
 
     const tokenResponse = await fetch(saTokenUrl, {
       method: 'POST',
       headers: {
-        // Use the 'Ant-' prefix for any headers the government API requires
         'Ant-Content-Type': 'application/json',
         'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
@@ -36,12 +37,11 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://www.fuel-finder.service.gov.uk/api/v1/prices';
-    const saPricesUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(pricesTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=false`;
+    const saPricesUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(pricesTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&browser=true&proxy_type=residential&proxy_country=gb`;
 
     const pricesResponse = await fetch(saPricesUrl, {
       method: 'GET',
       headers: {
-        // Forward the Authorization bearer token using the prefix
         'Ant-Authorization': `Bearer ${accessToken}`,
         'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
@@ -53,13 +53,12 @@ async function run() {
     }
 
     const pricesData = await pricesResponse.json();
-    console.log(`Fetched ${pricesData.stations?.length || 0} stations.`);
+    console.log(`Fetched fuel data successfully.`);
 
     // ---------------------------------------------------------
     // 3. Upload to Cloudflare KV (Direct)
     // ---------------------------------------------------------
     console.log("Uploading to Cloudflare KV...");
-    // We do not proxy this request because Cloudflare's API does not block GitHub Actions.
     const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
 
     const cfResponse = await fetch(cfUrl, {
