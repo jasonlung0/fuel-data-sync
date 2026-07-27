@@ -13,33 +13,35 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Requesting access token...");
 
-    // FIX 1: Removed 'www.' from the URL. 
-    // If this fails, try 'api.fuel-finder.service.gov.uk' instead.
-    const tokenTargetUrl = 'https://service.gov.uk';
-    const saBaseUrl = 'https://scrapingant.com';
+    // CONFIGURATION:
+    // 1. Target URL MUST include 'www'.
+    // 2. We use 'browser: false' to avoid the "Welcome" page redirect.
+    const tokenTargetUrl = 'https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token';
+    
+    // We construct the payload here to pass it into the 'data' query parameter
+    const authPayload = JSON.stringify({
+      client_id: process.env.GOV_CLIENT_ID,
+      client_secret: process.env.GOV_CLIENT_SECRET
+    });
 
-    // FIX 2: Configs in Query String, browser=false (Pure API mode)
     const tokenParams = new URLSearchParams({
       'x-api-key': SCRAPINGANT_API_KEY,
       'url': tokenTargetUrl,
+      'method': 'POST',            // Tell ScrapingAnt to POST to the target
+      'data': authPayload,         // The body to send
+      'header_Content-Type': 'application/json', // Target header
+      'header_Accept': 'application/json',       // Target header
       'proxy_type': 'residential', 
       'proxy_country': 'gb',
-      'browser': 'false' // Do not render HTML; we want raw JSON response
+      'browser': 'false' 
     });
 
-    const tokenResponse = await fetch(`${saBaseUrl}?${tokenParams.toString()}`, {
-      method: 'POST',
-      headers: {
-        'Ant-Content-Type': 'application/json', // Pass JSON body through proxy
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        client_id: process.env.GOV_CLIENT_ID,
-        client_secret: process.env.GOV_CLIENT_SECRET
-      })
+    // IMPORTANT: We send a GET request to ScrapingAnt. 
+    // ScrapingAnt reads the params and performs the POST for us.
+    const tokenResponse = await fetch(`https://scrapingant.com{tokenParams.toString()}`, {
+      method: 'GET' 
     });
 
-    // Debugging: If it fails, print the TEXT (not JSON) to see if it's HTML
     const rawTokenText = await tokenResponse.text();
 
     if (!tokenResponse.ok) {
@@ -52,7 +54,7 @@ async function run() {
     try {
       tokenData = JSON.parse(rawTokenText);
     } catch (e) {
-      console.error("CRITICAL: Received HTML instead of JSON. The URL might be wrong.");
+      console.error("CRITICAL: Received HTML instead of JSON.");
       console.error(`Snippet: ${rawTokenText.substring(0, 200)}`);
       throw new Error("Invalid JSON response.");
     }
@@ -65,23 +67,21 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     
-    // FIX 3: Removed 'www.' from prices URL as well
     const pricesTargetUrl = 'https://service.gov.uk';
     
     const pricesParams = new URLSearchParams({
       'url': pricesTargetUrl,
       'x-api-key': SCRAPINGANT_API_KEY,
-      'browser': 'false',
+      'method': 'GET',
+      'header_Authorization': `Bearer ${accessToken}`, // Pass token via header param
+      'header_Accept': 'application/json',
       'proxy_type': 'residential',
-      'proxy_country': 'gb'
+      'proxy_country': 'gb',
+      'browser': 'false'
     });
 
-    const pricesResponse = await fetch(`${saBaseUrl}?${pricesParams.toString()}`, {
-      method: 'GET',
-      headers: {
-        'Ant-Authorization': `Bearer ${accessToken}`,
-        'Ant-Accept': 'application/json'
-      }
+    const pricesResponse = await fetch(`https://scrapingant.com{pricesParams.toString()}`, {
+      method: 'GET'
     });
 
     const rawPricesText = await pricesResponse.text();
@@ -111,7 +111,8 @@ async function run() {
     });
 
     if (!cfResponse.ok) {
-      throw new Error(`Cloudflare Upload Failed: ${cfResponse.status}`);
+      const errorText = await cfResponse.text();
+      throw new Error(`Cloudflare Upload Failed: ${cfResponse.status} - ${errorText}`);
     }
 
     console.log("Upload successful!");
