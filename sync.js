@@ -2,7 +2,7 @@ async function run() {
   try {
     const SCRAPINGANT_API_KEY = process.env.SCRAPINGANT_API_KEY;
     
-    // Safety Validation 1: Prevent execution if GitHub Action Secrets aren't loading
+    // Safety Validation: Prevent execution if GitHub Action Secrets aren't loading
     if (!SCRAPINGANT_API_KEY || SCRAPINGANT_API_KEY.trim() === "") {
       throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty. Check your GitHub Secrets configuration.");
     }
@@ -16,13 +16,8 @@ async function run() {
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
     
-    // Clean string template generation with zero complex string-concatenation formatting issues
-    const saTokenUrl = 'https://scrapingant.com' 
-      + '?x-api-key=' + encodeURIComponent(SCRAPINGANT_API_KEY)
-      + '&url=' + encodeURIComponent(tokenTargetUrl)
-      + '&browser=true'
-      + '&proxy_type=residential'
-      + '&proxy_country=gb';
+    // Config url does NOT include parameters in the query string
+    const saTokenUrl = 'https://scrapingant.com' + encodeURIComponent(SCRAPINGANT_API_KEY);
 
     let tokenResponse;
     try {
@@ -33,9 +28,18 @@ async function run() {
           'Ant-Content-Type': 'application/json',
           'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         },
+        // ScrapingAnt requires configuration keys to live at the root level of the payload
         body: JSON.stringify({
-          client_id: process.env.GOV_CLIENT_ID,
-          client_secret: process.env.GOV_CLIENT_SECRET
+          url: tokenTargetUrl,
+          method: 'POST',
+          browser: true,
+          proxy_type: 'residential',
+          proxy_country: 'gb',
+          // Your target credentials must be passed as a stringified payload inside the 'data' property
+          data: JSON.stringify({
+            client_id: process.env.GOV_CLIENT_ID,
+            client_secret: process.env.GOV_CLIENT_SECRET
+          })
         })
       });
     } catch (networkError) {
