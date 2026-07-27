@@ -4,7 +4,7 @@ async function run() {
     
     // Safety Validation
     if (!SCRAPINGANT_API_KEY || SCRAPINGANT_API_KEY.trim() === "") {
-      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty. Check GitHub Secrets.");
+      throw new Error("CRITICAL: SCRAPINGANT_API_KEY is undefined or empty.");
     }
     if (!process.env.GOV_CLIENT_ID || !process.env.GOV_CLIENT_SECRET) {
       throw new Error("CRITICAL: GOV_CLIENT_ID or GOV_CLIENT_SECRET is missing.");
@@ -15,29 +15,33 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Requesting access token...");
     const tokenTargetUrl = 'https://service.gov.uk';
-    
-    // CORRECTED: ScrapingAnt configs must be query parameters for POST requests
     const saBaseUrl = 'https://api.scrapingant.com/v2/general';
+    
+    // CONFIGURATION:
+    // 1. All ScrapingAnt settings go in the URL Query String.
+    // 2. We enable 'browser: true' to pass Cloudflare/WAF checks.
     const tokenParams = new URLSearchParams({
       'x-api-key': SCRAPINGANT_API_KEY,
-      'url': tokenTargetUrl, 
-      'proxy_type': 'residential', // Standard often gets blocked by Gov sites
+      'url': tokenTargetUrl,
+      'proxy_type': 'residential', // Essential for bypassing geo-blocks
       'proxy_country': 'gb',
-      'browser': 'false' // Use false for pure API calls to avoid rendering overhead
+      'browser': 'true' // Renders the request in a real browser to pass WAF
     });
 
-    // Final URL: https://scrapingant.com...
     const saTokenUrl = `${saBaseUrl}?${tokenParams.toString()}`;
 
     let tokenResponse;
     try {
       tokenResponse = await fetch(saTokenUrl, {
-        method: 'POST', // Method matches the target API requirement
+        method: 'POST',
         headers: {
-          'Ant-Content-Type': 'application/json', // Instructs ScrapingAnt to forward body as JSON
-          'Content-Type': 'application/json'      // Standard header for good measure
+          // Tell ScrapingAnt to forward the body as JSON
+          'Ant-Content-Type': 'application/json',
+          // Tell the Gov API we strictly accept JSON (helps prevent HTML error pages)
+          'Ant-Accept': 'application/json', 
+          'Content-Type': 'application/json' 
         },
-        // Body contains ONLY the data for the Government API
+        // The Data Payload for the Gov API
         body: JSON.stringify({
           client_id: process.env.GOV_CLIENT_ID,
           client_secret: process.env.GOV_CLIENT_SECRET
@@ -48,16 +52,27 @@ async function run() {
       throw new Error(`Connection to ScrapingAnt endpoint failed: ${networkError.message}`);
     }
 
+    // ROBUST ERROR HANDLING:
+    // We read the text first to inspect it, preventing the "Unexpected token <" crash.
+    const rawTokenText = await tokenResponse.text();
+
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      // Log the HTML to see exactly what the error page says
-      console.error(`Full Error Response (HTML): ${errorText.substring(0, 500)}...`); 
-      throw new Error(`Token request failed with status ${tokenResponse.status}`);
+      // Log the specific HTML error to identify the block (e.g., "Cloudflare", "403 Forbidden")
+      console.error(`Request Failed with Status ${tokenResponse.status}`);
+      console.error(`Raw Error Body: ${rawTokenText.substring(0, 1000)}...`); 
+      throw new Error(`Token request failed: ${tokenResponse.status}`);
     }
 
-    const tokenData = await tokenResponse.json();
+    let tokenData;
+    try {
+      tokenData = JSON.parse(rawTokenText);
+    } catch (e) {
+      // If we still get HTML here, it means the site returned a 200 OK but with an HTML captcha/block page
+      console.error(`CRITICAL: Expected JSON but got HTML. Raw Body:\n${rawTokenText.substring(0, 500)}`);
+      throw new Error("Target API returned HTML instead of JSON. You are likely being blocked by a WAF.");
+    }
+
     const accessToken = tokenData.access_token;
-    
     if (!accessToken) {
       throw new Error(`Access token missing. Full response: ${JSON.stringify(tokenData)}`);
     }
@@ -69,11 +84,10 @@ async function run() {
     console.log("Fetching fuel prices...");
     const pricesTargetUrl = 'https://service.gov.uk';
     
-    // For GET requests, everything goes in the query string
     const pricesParams = new URLSearchParams({
       'url': pricesTargetUrl,
       'x-api-key': SCRAPINGANT_API_KEY,
-      'browser': 'false', 
+      'browser': 'true', 
       'proxy_type': 'residential',
       'proxy_country': 'gb'
     });
@@ -83,17 +97,28 @@ async function run() {
     const pricesResponse = await fetch(saPricesUrl, {
       method: 'GET',
       headers: {
-        'Ant-Authorization': `Bearer ${accessToken}`, // Pass the token via Ant header
+        'Ant-Authorization': `Bearer ${accessToken}`,
+        'Ant-Accept': 'application/json', // Ensure we ask for JSON here too
         'Ant-User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
 
+    const rawPricesText = await pricesResponse.text();
+
     if (!pricesResponse.ok) {
-      const errorText = await pricesResponse.text();
-      throw new Error(`Prices request failed with status ${pricesResponse.status}: ${errorText.substring(0, 500)}`);
+      console.error(`Prices Request Failed: ${pricesResponse.status}`);
+      console.error(`Raw Body: ${rawPricesText.substring(0, 500)}`);
+      throw new Error(`Prices request failed.`);
     }
 
-    const pricesData = await pricesResponse.json();
+    let pricesData;
+    try {
+      pricesData = JSON.parse(rawPricesText);
+    } catch (e) {
+      console.error(`CRITICAL: Prices response was not JSON. Raw Body:\n${rawPricesText.substring(0, 500)}`);
+      throw new Error("Prices endpoint returned HTML. WAF Block likely.");
+    }
+
     console.log(`Fetched fuel data successfully.`);
 
     // ---------------------------------------------------------
