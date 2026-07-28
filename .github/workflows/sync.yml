@@ -3,7 +3,7 @@ name: UK Fuel Data Sync
 on:
   schedule:
     # Runs automatically at minute 15 past every hour (e.g., 10:15, 11:15)
-    - cron: '15 * * * *'
+    #- cron: '15 * * * *'
   workflow_dispatch:
     # Allows you to click a button in GitHub to run it manually
 
