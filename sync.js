@@ -13,33 +13,22 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Requesting access token...");
 
-    // CONFIGURATION:
-    // 1. Target URL MUST include 'www'.
-    // 2. We use 'browser: false' to avoid the "Welcome" page redirect.
     const tokenTargetUrl = 'https://www.fuel-finder.service.gov.uk/api/v1/oauth/generate_access_token';
     
-    // We construct the payload here to pass it into the 'data' query parameter
-    const authPayload = JSON.stringify({
-      client_id: process.env.GOV_CLIENT_ID,
-      client_secret: process.env.GOV_CLIENT_SECRET
-    });
+    // Corrected ScrapingAnt API URL with proper query parameters
+    const saTokenUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(tokenTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&proxy_type=residential&proxy_country=gb&browser=false`;
 
-    const tokenParams = new URLSearchParams({
-      'x-api-key': SCRAPINGANT_API_KEY,
-      'url': tokenTargetUrl,
-      'method': 'POST',            // Tell ScrapingAnt to POST to the target
-      'data': authPayload,         // The body to send
-      'header_Content-Type': 'application/json', // Target header
-      'header_Accept': 'application/json',       // Target header
-      'proxy_type': 'residential', 
-      'proxy_country': 'gb',
-      'browser': 'false' 
-    });
-
-    // IMPORTANT: We send a GET request to ScrapingAnt. 
-    // ScrapingAnt reads the params and performs the POST for us.
-    const tokenResponse = await fetch(`https://scrapingant.com{tokenParams.toString()}`, {
-      method: 'GET' 
+    // ScrapingAnt requires you to pass the POST method, body, and custom headers natively
+    const tokenResponse = await fetch(saTokenUrl, {
+      method: 'POST', 
+      headers: {
+        'Ant-Content-Type': 'application/json',
+        'Ant-Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: process.env.GOV_CLIENT_ID,
+        client_secret: process.env.GOV_CLIENT_SECRET
+      })
     });
 
     const rawTokenText = await tokenResponse.text();
@@ -55,7 +44,6 @@ async function run() {
       tokenData = JSON.parse(rawTokenText);
     } catch (e) {
       console.error("CRITICAL: Received HTML instead of JSON.");
-      console.error(`Snippet: ${rawTokenText.substring(0, 200)}`);
       throw new Error("Invalid JSON response.");
     }
 
@@ -67,21 +55,17 @@ async function run() {
     // ---------------------------------------------------------
     console.log("Fetching fuel prices...");
     
-    const pricesTargetUrl = 'https://service.gov.uk';
+    // Corrected Fuel API endpoint
+    const pricesTargetUrl = 'https://www.fuel-finder.service.gov.uk/api/v1/prices';
     
-    const pricesParams = new URLSearchParams({
-      'url': pricesTargetUrl,
-      'x-api-key': SCRAPINGANT_API_KEY,
-      'method': 'GET',
-      'header_Authorization': `Bearer ${accessToken}`, // Pass token via header param
-      'header_Accept': 'application/json',
-      'proxy_type': 'residential',
-      'proxy_country': 'gb',
-      'browser': 'false'
-    });
+    const saPricesUrl = `https://api.scrapingant.com/v2/general?url=${encodeURIComponent(pricesTargetUrl)}&x-api-key=${SCRAPINGANT_API_KEY}&proxy_type=residential&proxy_country=gb&browser=false`;
 
-    const pricesResponse = await fetch(`https://scrapingant.com{pricesParams.toString()}`, {
-      method: 'GET'
+    const pricesResponse = await fetch(saPricesUrl, {
+      method: 'GET',
+      headers: {
+        'Ant-Authorization': `Bearer ${accessToken}`, 
+        'Ant-Accept': 'application/json'
+      }
     });
 
     const rawPricesText = await pricesResponse.text();
@@ -99,7 +83,9 @@ async function run() {
     // 3. Upload to Cloudflare KV
     // ---------------------------------------------------------
     console.log("Uploading to Cloudflare KV...");
-    const cfUrl = `https://cloudflare.com{process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
+    
+    // Corrected Cloudflare API endpoint with proper variable interpolation
+    const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/storage/kv/namespaces/${process.env.CF_NAMESPACE_ID}/values/latest_fuel_data`;
 
     const cfResponse = await fetch(cfUrl, {
       method: 'PUT',
